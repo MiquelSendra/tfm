@@ -1,4 +1,4 @@
-# TFM Assigner
+# TFM management
 
 Automates creation of per-student defense folders for TFM/TFT evaluation:
 - matches students across ZIP submissions, Excel master list, and director reports,
