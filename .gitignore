@@ -87,3 +87,5 @@ venv/
 memorias/
 output/
 informes/
+*.zip
+*.xlsx
