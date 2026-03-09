@@ -17,7 +17,7 @@ def discover_source_files(workspace_dir: Path, logger: logging.Logger) -> Source
     zip_file = _discover_zip_file(workspace_dir)
     excel_file = _discover_excel_file(workspace_dir)
     docx_template = _discover_docx_template(workspace_dir, logger)
-    pdf_files = sorted(workspace_dir.glob("*.pdf"))
+    pdf_files = _discover_pdf_files(workspace_dir)
 
     logger.info("ZIP detected: %s", zip_file.name)
     logger.info("Excel detected: %s", excel_file.name)
@@ -95,3 +95,29 @@ def _extract_docx_text(path: Path) -> str:
             for cell in row.cells:
                 chunks.append(cell.text)
     return "\n".join(chunks)
+
+
+def _discover_pdf_files(workspace_dir: Path) -> list[Path]:
+    pdf_files: list[Path] = []
+    for path in workspace_dir.rglob("*.pdf"):
+        if _should_skip_pdf(path, workspace_dir):
+            continue
+        pdf_files.append(path)
+    return sorted(pdf_files)
+
+
+def _should_skip_pdf(path: Path, workspace_dir: Path) -> bool:
+    try:
+        relative_parts = path.resolve().relative_to(workspace_dir.resolve()).parts
+    except ValueError:
+        return True
+
+    if any(part.startswith(".") for part in relative_parts):
+        return True
+    if "output" in relative_parts:
+        return True
+
+    name = path.name
+    if name.startswith("~$") or name.startswith("._"):
+        return True
+    return False

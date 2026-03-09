@@ -1,0 +1,19 @@
+# Changes here will be overwritten by Copier
+_commit: e00602a
+_src_path: gh:CENTURI-Introduction-to-Python/CENTURI-template.git
+class_name: Student
+display_name: Creating folders for final degree project student management
+email: miquel.sendra@professor.universidadviu.com
+executable: false
+full_name: Miquel Sendra
+github_repository_url: https://github.com/MiquelSendra/tfm
+github_username_or_organization: MiquelSendra
+license: MIT
+module_name: _tfm
+numpy: true
+package_name: tfm
+scikit_image: false
+scikit_learn: false
+scipy: false
+short_description: A repo to manage the subject final degree project
+test_notebook: true
