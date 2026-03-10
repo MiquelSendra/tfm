@@ -89,3 +89,10 @@ output/
 informes/
 *.zip
 *.xlsx
+
+# excecutable files
+scripts/
+build/
+dist/
+requirements-build.txt
+tfm_assigner.spec

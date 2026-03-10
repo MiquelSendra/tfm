@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 
 from docx import Document
@@ -39,12 +38,10 @@ def _discover_zip_file(workspace_dir: Path) -> Path:
     zip_candidates = [
         path
         for path in workspace_dir.glob("*.zip")
-        if re.fullmatch(r"\d+\.zip", path.name)
+        if not path.name.startswith("~$") and not path.name.startswith(".")
     ]
     if not zip_candidates:
-        raise FileNotFoundError(
-            "No ZIP file with numeric filename found (expected pattern: 123456.zip)."
-        )
+        raise FileNotFoundError("No ZIP file found in workspace root.")
     zip_candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
     return zip_candidates[0]
 

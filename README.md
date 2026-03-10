@@ -5,6 +5,32 @@ Automates creation of per-student defense folders for TFM/TFT evaluation:
 - generates editable actas,
 - packages each student dossier ready to upload (for example, to OneDrive).
 
+## No-Install Mode (Recommended for End Users)
+
+You can run this tool without installing Python, pip, or creating environments.
+
+Use a prebuilt executable:
+- **Windows**: `tfm_assigner.exe`
+- **Linux/macOS (Unix)**: `tfm_assigner`
+
+How to use:
+1. Download the executable for your OS from the project release/artifacts.
+2. Copy that executable into your run folder (the folder that contains ZIP/Excel/template/reports).
+3. Run:
+
+Windows:
+```powershell
+.\tfm_assigner.exe
+```
+
+Unix (Linux/macOS):
+```bash
+chmod +x tfm_assigner
+./tfm_assigner
+```
+
+The executable behaves exactly like `python tfm_folders.py`.
+
 ## What This Script Produces
 
 After running, the tool creates:
@@ -60,6 +86,34 @@ Or with explicit workspace:
 python tfm_folders.py --workspace /path/to/run_folder
 ```
 
+## Build the Executable (for maintainers)
+
+### Unix (Linux/macOS)
+
+```bash
+./scripts/build_executable.sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+.\scripts\build_executable.ps1
+```
+
+Binary output:
+- Unix: `dist/tfm_assigner`
+- Windows: `dist/tfm_assigner.exe`
+
+### Automated cross-platform builds (CI)
+
+GitHub Actions workflow:
+- `.github/workflows/build-executables.yml`
+
+It builds one-file executables for:
+- Linux
+- macOS
+- Windows
+
 ## Environment
 
 Use your existing mamba environment:
@@ -89,7 +143,7 @@ python tfm_folders.py \
 Run the script from a workspace folder (or pass it with `--workspace`).
 
 Required:
-1. ZIP of submitted manuscripts with numeric filename only, like `182571167.zip` (workspace root).
+1. ZIP of submitted manuscripts (`.zip`) in workspace root.
 2. Excel master list (`.xlsx`) with student data (workspace root).
 3. Acta template (`.docx`) editable template (workspace root).
 4. Director report PDFs (`.pdf`) anywhere under workspace (root or subfolders such as `informes/`).
@@ -112,8 +166,8 @@ Important:
 ## Expected File Behavior and Detection Rules
 
 ### ZIP
-- Must match regex: `^\d+\.zip$`.
-- If multiple numeric ZIP files exist, the newest by modification time is used.
+- Any `.zip` filename is accepted.
+- If multiple ZIP files exist in workspace root, the newest by modification time is used.
 - Manuscript files accepted inside ZIP: `.pdf`, `.doc`, `.docx`, `.odt`.
 
 ### Excel
@@ -164,7 +218,7 @@ Recommended run folder layout before execution:
 
 ```text
 run_folder/
-  182571167.zip
+  entregas_tfm_abril.zip
   2510_ListadoTFT_MBIF.xlsx
   50789_Apellido 1 Apellido 2, Nombre_Abril 25_NUEVA.docx
   informes/
@@ -178,13 +232,12 @@ Do not move ZIP/Excel/template out of workspace root unless you also change the 
 
 These changes commonly break or degrade the process:
 
-1. ZIP filename not numeric (example: `entregas.zip`).
-2. Missing Excel columns for student name or DNI.
-3. Director reports only available as scanned PDFs without OCR text.
-4. No valid DOCX acta template in root.
-5. Multiple competing templates with similar content in root.
-6. Non-PDF manuscript with no LibreOffice available.
-7. Running with a wrong `--workspace` folder.
+1. Missing Excel columns for student name or DNI.
+2. Director reports only available as scanned PDFs without OCR text.
+3. No valid DOCX acta template in root.
+4. Multiple competing templates with similar content in root.
+5. Non-PDF manuscript with no LibreOffice available.
+6. Running with a wrong `--workspace` folder.
 
 ## Output Files You Should Review Every Run
 
