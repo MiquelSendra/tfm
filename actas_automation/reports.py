@@ -41,7 +41,7 @@ def parse_pdf_files(
 def extract_pdf_text(path: Path, logger: logging.Logger) -> str:
     """Read all extractable text from a PDF file."""
     try:
-        reader = PdfReader(str(path))
+        reader = PdfReader(str(path), strict=False)
         return "\n".join((page.extract_text() or "") for page in reader.pages)
     except Exception as exc:  # pragma: no cover - depends on third-party parser
         logger.warning("Could not read PDF text from %s: %s", path.name, exc)
@@ -135,10 +135,11 @@ def try_fill_pdf_template(
     """Fill a PDF form template if AcroForm fields exist; return success."""
     try:
         from pypdf import PdfReader, PdfWriter
+        from pypdf.generic import NameObject, TextStringObject
     except Exception:  # pragma: no cover - guarded import
         return False
 
-    reader = PdfReader(str(template_pdf))
+    reader = PdfReader(str(template_pdf), strict=False)
     fields = reader.get_fields() or {}
     if not fields:
         logger.warning("PDF template has no form fields: %s", template_pdf.name)
@@ -148,7 +149,17 @@ def try_fill_pdf_template(
     writer = PdfWriter()
     writer.clone_document_from_reader(reader)
     for page in writer.pages:
-        writer.update_page_form_field_values(page, field_values)
+        annotations = page.get("/Annots") or []
+        for annotation in annotations:
+            widget = annotation.get_object()
+            field_name = widget.get("/T")
+            if field_name not in field_values:
+                continue
+            value = field_values[field_name]
+            widget[NameObject("/V")] = TextStringObject(value)
+            widget[NameObject("/DV")] = TextStringObject(value)
+
+    writer.set_need_appearances_writer(True)
 
     with output_pdf.open("wb") as handle:
         writer.write(handle)
@@ -159,16 +170,39 @@ def _map_pdf_fields(field_names: list[str], context: ActaContext) -> dict[str, s
     value_map: dict[str, str] = {}
     for name in field_names:
         normalized = normalize_text(name)
+        if any(
+            token in normalized
+            for token in ("presidente", "secretario", "apto", "observaciones")
+        ):
+            continue
+        if normalized.startswith("date") or normalized.startswith("text4"):
+            continue
+
         if "titulacion" in normalized:
+            value_map[name] = context.titulacion
+        elif "por ejemplo" in normalized and (
+            "master" in normalized or "bioinformatica" in normalized
+        ):
             value_map[name] = context.titulacion
         elif "curso" in normalized or "edicion" in normalized:
             value_map[name] = context.edicion
+        elif "por ejemplo" in normalized and "abril" in normalized:
+            value_map[name] = context.edicion
         elif "dni" in normalized or "pasaporte" in normalized:
-            value_map[name] = context.dni
+            if "nombre apellidos y dniniepasaporte" in normalized:
+                value_map[name] = context.director
+            else:
+                value_map[name] = context.dni
         elif "nombre" in normalized and "director" not in normalized:
+            if "presidente" in normalized or "secretario" in normalized:
+                continue
             value_map[name] = context.student_name
         elif "titulo" in normalized and "trabajo" in normalized:
             value_map[name] = context.thesis_title
+        elif "titulo del tft" in normalized:
+            value_map[name] = context.thesis_title
         elif "director" in normalized:
+            value_map[name] = context.director
+        elif "nombre apellidos y dniniepasaporte" in normalized:
             value_map[name] = context.director
     return value_map

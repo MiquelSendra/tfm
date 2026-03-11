@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import csv
 import logging
-import os
 import re
-import subprocess
-from shutil import which
 from shutil import copy2
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,7 +13,6 @@ from typing import Iterable
 
 from .config import AppConfig
 from .discovery import discover_source_files
-from .docx_generator import generate_docx_acta
 from .excel_source import load_students_and_metadata
 from .matching import MatcherConfig, StudentMatcher
 from .models import (
@@ -28,9 +24,10 @@ from .models import (
 )
 from .reports import parse_pdf_files, try_fill_pdf_template
 from .text_utils import (
-    build_acta_filename,
+    build_acta_output_stem,
     build_student_folder_name,
     clean_text,
+    extract_template_code_and_edition,
     normalize_text,
 )
 from .zip_source import extract_zip_member, read_zip_submissions
@@ -57,6 +54,7 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
     """Run the complete process and generate output artifacts."""
     output_dirs = _prepare_output_dirs(config.output_dir)
     logger = _build_logger(output_dirs["logs"])
+    logging.getLogger("pypdf").setLevel(logging.ERROR)
     logger.info("Starting automation in workspace: %s", config.workspace_dir)
 
     sources = discover_source_files(config.workspace_dir, logger)
@@ -71,8 +69,13 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
 
     submissions = read_zip_submissions(sources.zip_file, logger)
     matched_submissions, manual_rows = _match_submissions(submissions, matcher, logger)
+    matched_submissions = _filter_matched_submissions(
+        matched_submissions,
+        config.student_filter,
+        logger,
+    )
 
-    reports, non_report_pdfs = parse_pdf_files(sources.pdf_files, logger)
+    reports, _ = parse_pdf_files(sources.pdf_files, logger)
     report_by_student, report_strategy_by_student, report_manual_rows = _match_reports(
         reports,
         matcher,
@@ -83,6 +86,12 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
 
     summary_rows: list[dict[str, str]] = []
     generated_count = 0
+    _, template_edition = extract_template_code_and_edition(sources.acta_pdf_template)
+    resolved_edition = clean_text(metadata.edition) or template_edition
+    if not clean_text(metadata.edition) and resolved_edition:
+        logger.info(
+            "Edition inferred from template filename: '%s'", resolved_edition
+        )
 
     for student_uid, submission_info in matched_submissions.items():
         student = submission_info.student
@@ -91,7 +100,12 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
 
         report = report_by_student.get(student_uid)
         report_match_strategy = report_strategy_by_student.get(student_uid, "")
-        context = _build_acta_context(student, metadata.title, metadata.edition, report)
+        context = _build_acta_context(
+            student,
+            metadata.title,
+            resolved_edition,
+            report,
+        )
 
         student_folder_name = build_student_folder_name(student.full_name)
         student_folder = output_dirs["students"] / student_folder_name
@@ -109,7 +123,15 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
             if legacy_manuscript_path != manuscript_path and legacy_manuscript_path.exists():
                 legacy_manuscript_path.unlink()
             extract_zip_member(sources.zip_file, submission_member, manuscript_path)
-            manuscript_path = _convert_manuscript_to_pdf_if_needed(manuscript_path)
+            manuscript_path, manuscript_conversion_note = _convert_manuscript_to_pdf_if_needed(
+                manuscript_path
+            )
+            if manuscript_conversion_note:
+                manuscript_notes = (
+                    f"{manuscript_notes} | {manuscript_conversion_note}"
+                    if manuscript_notes
+                    else manuscript_conversion_note
+                )
         except Exception as exc:  # pragma: no cover - depends on source files
             manuscript_status = "error"
             manuscript_notes = f"manuscript_processing_error: {exc}"
@@ -129,23 +151,25 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
             report_notes = "director_report_not_found"
             logger.warning("No director report matched for %s", student.full_name)
 
-        output_name = build_acta_filename(student.full_name)
-        acta_output_docx = student_folder / output_name
+        output_stem = build_acta_output_stem(
+            student_name=student.full_name,
+            template_path=sources.acta_pdf_template,
+            edition=resolved_edition,
+        )
+        acta_output_pdf = student_folder / f"{output_stem}.pdf"
         generation_status = "ok"
         generation_notes = ""
-        output_file = str(acta_output_docx)
+        output_file = str(acta_output_pdf)
 
         try:
-            if sources.docx_template:
-                generate_docx_acta(sources.docx_template, acta_output_docx, context)
-            elif non_report_pdfs:
-                pdf_output = student_folder / output_name.replace(".docx", ".pdf")
-                success = try_fill_pdf_template(non_report_pdfs[0], pdf_output, context, logger)
-                if not success:
-                    raise RuntimeError("No suitable DOCX template or fillable PDF template found.")
-                output_file = str(pdf_output)
-            else:
-                raise RuntimeError("No suitable DOCX template or fillable PDF template found.")
+            success = try_fill_pdf_template(
+                sources.acta_pdf_template,
+                acta_output_pdf,
+                context,
+                logger,
+            )
+            if not success:
+                raise RuntimeError("Acta PDF template has no fillable fields.")
             generated_count += 1
         except Exception as exc:  # pragma: no cover - depends on source files
             generation_status = "error"
@@ -231,66 +255,11 @@ def _clean_submission_filename(filename: str) -> str:
     return cleaned or filename
 
 
-def _convert_manuscript_to_pdf_if_needed(path: Path) -> Path:
-    """Convert non-PDF manuscript files to PDF using LibreOffice headless."""
+def _convert_manuscript_to_pdf_if_needed(path: Path) -> tuple[Path, str]:
+    """Keep manuscript as-is; no office conversion dependency is required."""
     if path.suffix.lower() == ".pdf":
-        return path
-
-    office_bin = _find_office_binary()
-    if not office_bin:
-        raise RuntimeError(
-            "No LibreOffice/soffice binary found for manuscript conversion to PDF."
-        )
-
-    command = [
-        office_bin,
-        "--headless",
-        "--convert-to",
-        "pdf",
-        "--outdir",
-        str(path.parent),
-        str(path),
-    ]
-    result = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            "LibreOffice conversion failed "
-            f"(code {result.returncode}): {result.stderr.strip() or result.stdout.strip()}"
-        )
-
-    pdf_path = path.with_suffix(".pdf")
-    if not pdf_path.exists():
-        raise RuntimeError(f"Expected converted PDF not found: {pdf_path.name}")
-
-    path.unlink(missing_ok=True)
-    return pdf_path
-
-
-def _find_office_binary() -> str:
-    """Locate a usable LibreOffice executable."""
-    env_bin = os.environ.get("LIBREOFFICE_BIN", "").strip()
-    if env_bin and Path(env_bin).exists():
-        return env_bin
-
-    candidates = [
-        "soffice",
-        "libreoffice",
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-    ]
-    for candidate in candidates:
-        if candidate.startswith("/"):
-            if Path(candidate).exists():
-                return candidate
-            continue
-        found = which(candidate)
-        if found:
-            return found
-    return ""
+        return path, ""
+    return path, "manuscript_kept_original_non_pdf"
 
 
 def _prepare_output_dirs(output_dir: Path) -> dict[str, Path]:
@@ -370,6 +339,29 @@ def _match_submissions(
             )
 
     return matched_by_student, manual_rows
+
+
+def _filter_matched_submissions(
+    matched_by_student: dict[str, _MatchedSubmission],
+    student_filter: str,
+    logger: logging.Logger,
+) -> dict[str, _MatchedSubmission]:
+    if not clean_text(student_filter):
+        return matched_by_student
+
+    token = normalize_text(student_filter)
+    filtered = {
+        uid: info
+        for uid, info in matched_by_student.items()
+        if token in normalize_text(info.student.full_name)
+    }
+    logger.info(
+        "Applied --only-student filter '%s': %s -> %s matches",
+        student_filter,
+        len(matched_by_student),
+        len(filtered),
+    )
+    return filtered
 
 
 def _match_reports(

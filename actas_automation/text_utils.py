@@ -65,6 +65,52 @@ def build_acta_filename(student_name: str, suffix: str = "acta.docx") -> str:
     return f"{ascii_name}_{suffix}"
 
 
+def extract_template_code_and_edition(template_path: Path | None) -> tuple[str, str]:
+    """Extract subject code and edition from '<code>_<name>_<edition>' stems."""
+    if not template_path:
+        return "", ""
+
+    stem = clean_text(template_path.stem)
+    if not stem:
+        return "", ""
+
+    parts = stem.split("_")
+    if not parts:
+        return "", ""
+
+    code = clean_text(parts[0])
+    edition = clean_text("_".join(parts[2:])) if len(parts) >= 3 else ""
+    return code, edition
+
+
+def build_acta_output_stem(
+    student_name: str,
+    template_path: Path | None = None,
+    edition: str = "",
+) -> str:
+    """Build acta stem preserving template naming convention when available."""
+    student_display = build_student_folder_name(student_name)
+    student_display = re.sub(r"\s+", " ", student_display).strip()
+    student_display = student_display.replace("/", "-")
+
+    code, template_edition = extract_template_code_and_edition(template_path)
+    resolved_edition = clean_text(edition) or template_edition
+
+    if code:
+        parts = [code, student_display]
+        if resolved_edition:
+            parts.append(resolved_edition)
+        return "_".join(parts)
+
+    # Fallback for non-conforming template names.
+    if template_path:
+        stem = clean_text(template_path.stem)
+        if stem:
+            return f"{stem}_{student_display}"
+
+    return build_acta_filename(student_display, suffix="acta").removesuffix("_acta")
+
+
 def build_student_folder_name(student_name: str) -> str:
     """Build display folder name as 'Apellido1 Apellido2, Nombre'."""
     name = " ".join(clean_text(student_name).split())

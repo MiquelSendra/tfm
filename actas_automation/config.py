@@ -14,6 +14,7 @@ class AppConfig:
     output_dir: Path
     match_threshold: float = 82.0
     ambiguity_margin: float = 4.0
+    student_filter: str = ""
 
     @classmethod
     def from_workspace(
@@ -22,6 +23,7 @@ class AppConfig:
         output_dir_name: str = "output",
         match_threshold: float = 82.0,
         ambiguity_margin: float = 4.0,
+        student_filter: str = "",
     ) -> "AppConfig":
         """Build a config using paths rooted in the workspace directory."""
         workspace = workspace_dir.resolve()
@@ -30,4 +32,5 @@ class AppConfig:
             output_dir=(workspace / output_dir_name).resolve(),
             match_threshold=match_threshold,
             ambiguity_margin=ambiguity_margin,
+            student_filter=student_filter.strip(),
         )

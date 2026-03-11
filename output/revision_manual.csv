@@ -1,5 +1,4 @@
 source_type,source_file,candidate_name,best_student,best_score,second_score,issue,notes
-zip,2898956113 - Kevin Steven De La Cruz Musayon - TESIS_MAESTRIA_KEVIN_DELACRUZ_TFM.pdf,Kevin Steven De La Cruz Musayon,"De la Cruz Musayon, Kevin Steven",100.00,100.00,ambiguous,top_two_too_close
 director_report,Informe del director de TFT_MBIF Eliana Yurany Santos Santana (1).pdf,"Santos Santana, Eliana Yurany",,50.98,49.18,unmatched,score_below_threshold
 director_report,Informe del director de TFT_MBIF Ulises Jose Lozano Zacarias (1).pdf,"Lozano Zacarías, Ulises José",,48.39,47.46,unmatched,score_below_threshold
 director_report,Informe del director de TFT_MBIF_signed (1).pdf,"Sende Pombo, Martín",,48.65,46.15,unmatched,score_below_threshold

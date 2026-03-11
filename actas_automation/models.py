@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -42,7 +41,7 @@ class SourceFiles:
 
     excel_file: Path
     zip_file: Path
-    docx_template: Optional[Path]
+    acta_pdf_template: Path
     pdf_files: list[Path]
 
 

@@ -77,6 +77,16 @@ class StudentMatcher:
             second_score >= self._config.min_score
             and (top_score - second_score) < self._config.ambiguity_margin
         ):
+            dni_tie_break = self._resolve_tie_by_dni(scores, top_score)
+            if dni_tie_break:
+                return NameMatch(
+                    candidate_name=candidate_name,
+                    matched_student=dni_tie_break,
+                    score=top_score,
+                    second_score=second_score,
+                    status="matched",
+                    notes="tie_break_by_dni",
+                )
             return NameMatch(
                 candidate_name=candidate_name,
                 matched_student=top_student,
@@ -94,3 +104,22 @@ class StudentMatcher:
             status="matched",
             notes="ok",
         )
+
+    @staticmethod
+    def _resolve_tie_by_dni(
+        scores: list[tuple[float, StudentRecord]],
+        top_score: float,
+    ) -> StudentRecord | None:
+        """Prefer the only tied candidate that has a DNI."""
+        tied_students = [
+            student
+            for score, student in scores
+            if abs(score - top_score) < 1e-9
+        ]
+        if len(tied_students) <= 1:
+            return None
+
+        with_dni = [student for student in tied_students if student.dni.strip()]
+        if len(with_dni) == 1:
+            return with_dni[0]
+        return None

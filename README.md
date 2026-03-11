@@ -10,8 +10,8 @@ Automates creation of per-student defense folders for TFM/TFT evaluation:
 You can run this tool without installing Python, pip, or creating environments.
 
 Use a prebuilt executable:
-- **Windows**: `tfm_assigner.exe`
-- **Linux/macOS (Unix)**: `tfm_assigner`
+- **Windows**: `crear carpetas TFM.exe` (also distributed as `tfm_assigner.exe`)
+- **Linux/macOS (Unix)**: `crear carpetas TFM` (also distributed as `tfm_assigner`)
 
 How to use:
 1. Download the executable for your OS from the project release/artifacts.
@@ -20,13 +20,13 @@ How to use:
 
 Windows:
 ```powershell
-.\tfm_assigner.exe
+.\crear carpetas TFM.exe
 ```
 
 Unix (Linux/macOS):
 ```bash
-chmod +x tfm_assigner
-./tfm_assigner
+chmod +x "crear carpetas TFM"
+./"crear carpetas TFM"
 ```
 
 The executable behaves exactly like `python tfm_folders.py`.
@@ -37,9 +37,9 @@ After running, the tool creates:
 
 `output/`
 - `estudiantes/Apellido1 Apellido2, Nombre/`
-  - manuscript (PDF; non-PDF manuscripts are converted to PDF when possible)
+  - manuscript (copied as received from ZIP)
   - matched director report PDF (if found)
-  - generated acta DOCX
+  - generated acta PDF (prefilled student data, tribunal fields remain editable)
 - `resumen_procesamiento.csv`
 - `revision_manual.csv`
 - `logs/procesamiento_YYYYMMDD_HHMMSS.log`
@@ -62,7 +62,7 @@ cd tfm
 ### 2. Create a reproducible environment (recommended: mamba)
 
 ```bash
-mamba create -n tfm_assigner -y python=3.11 pandas openpyxl rapidfuzz unidecode pypdf python-docx
+mamba create -n tfm_assigner -y python=3.11 pandas openpyxl rapidfuzz unidecode pypdf
 mamba activate tfm_assigner
 ```
 
@@ -101,8 +101,8 @@ python tfm_folders.py --workspace /path/to/run_folder
 ```
 
 Binary output:
-- Unix: `dist/tfm_assigner`
-- Windows: `dist/tfm_assigner.exe`
+- Unix: `dist/crear carpetas TFM` and `dist/tfm_assigner`
+- Windows: `dist/crear carpetas TFM.exe` and `dist/tfm_assigner.exe`
 
 ### Automated cross-platform builds (CI)
 
@@ -135,7 +135,8 @@ python tfm_folders.py \
   --workspace /path/to/run_folder \
   --output-dir-name output \
   --match-threshold 82 \
-  --ambiguity-margin 4
+  --ambiguity-margin 4 \
+  --only-student "Apellido"
 ```
 
 ## Required Input Files
@@ -145,7 +146,8 @@ Run the script from a workspace folder (or pass it with `--workspace`).
 Required:
 1. ZIP of submitted manuscripts (`.zip`) in workspace root.
 2. Excel master list (`.xlsx`) with student data (workspace root).
-3. Acta template (`.docx`) editable template (workspace root).
+3. Acta template (`.pdf`) fillable PDF template (workspace root).
+Optional:
 4. Director report PDFs (`.pdf`) anywhere under workspace (root or subfolders such as `informes/`).
 
 Important:
@@ -161,7 +163,7 @@ Important:
 3. Director reports:
    Download all director report PDFs for the same call.
 4. Acta template:
-   Use the official editable DOCX acta model used by your program.
+   Use the official fillable PDF acta model used by your program.
 
 ## Expected File Behavior and Detection Rules
 
@@ -185,32 +187,23 @@ Important:
 - Reports must be valid text PDFs (scanned image PDFs without OCR can fail).
 
 ### Acta template
-- `.docx` templates are inspected; the one that best matches expected markers is selected.
-- Keep only one real acta template `.docx` in the run folder to avoid ambiguity.
+- A fillable `.pdf` template in workspace root is required.
+- Keep only one real acta template `.pdf` in the run folder to avoid ambiguity.
+- Template filename controls acta output naming. Use:
+  - `<codigo_asignatura>_<Apellido1 Apellido2, Nombre>_<edicion>.pdf`
+  - Example template name:
+    - `50789_Apellido 1 Apellido 2, Nombre_Abril 25.pdf`
+  - Generated actas will follow exactly:
+    - `50789_<Apellido real del estudiante, Nombre>_Abril 25.pdf`
+  - `edicion` is taken from Excel metadata when available; if missing, it is inferred from template filename.
 
-## Manuscript Naming and Conversion
+## Manuscript Naming
 
 For each extracted manuscript:
 1. Leading numeric prefix is removed from filename:
    - `2891870066 - Eliana Yurany Santos Santana - tfm_final_4.docx`
    - becomes `Eliana Yurany Santos Santana - tfm_final_4.docx`
-2. If manuscript is not PDF, script attempts conversion to PDF via LibreOffice headless.
-
-LibreOffice binary detection order:
-1. `LIBREOFFICE_BIN` environment variable (full path),
-2. `soffice` in `PATH`,
-3. `libreoffice` in `PATH`,
-4. `/Applications/LibreOffice.app/Contents/MacOS/soffice` (macOS default).
-
-If no LibreOffice binary is found, conversion fails for non-PDF manuscripts and the issue is logged in:
-- `output/resumen_procesamiento.csv` (`manuscript_status`, `notes`)
-- `output/logs/...`
-
-To make DOCX/ODT manuscript conversion work, install LibreOffice and make `soffice` available in `PATH`, or set:
-
-```bash
-export LIBREOFFICE_BIN="/full/path/to/soffice"
-```
+2. Manuscripts are kept in original format (no office conversion dependency).
 
 ## Folder Structure You Must Respect
 
@@ -220,7 +213,7 @@ Recommended run folder layout before execution:
 run_folder/
   entregas_tfm_abril.zip
   2510_ListadoTFT_MBIF.xlsx
-  50789_Apellido 1 Apellido 2, Nombre_Abril 25_NUEVA.docx
+  50789_Apellido 1 Apellido 2, Nombre_Abril 25.pdf
   informes/
     Informe del director ... .pdf
     Informe del director ... .pdf
@@ -234,9 +227,9 @@ These changes commonly break or degrade the process:
 
 1. Missing Excel columns for student name or DNI.
 2. Director reports only available as scanned PDFs without OCR text.
-3. No valid DOCX acta template in root.
-4. Multiple competing templates with similar content in root.
-5. Non-PDF manuscript with no LibreOffice available.
+3. No valid fillable PDF acta template in root.
+4. Multiple competing PDF templates in root.
+5. PDF template without AcroForm fillable fields.
 6. Running with a wrong `--workspace` folder.
 
 ## Output Files You Should Review Every Run
