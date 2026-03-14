@@ -22,7 +22,7 @@ from .models import (
     StudentRecord,
     SubmissionEntry,
 )
-from .reports import parse_pdf_files, try_fill_pdf_template
+from .reports import extract_manuscript_title_from_pdf, parse_pdf_files, try_fill_pdf_template
 from .text_utils import (
     build_acta_output_stem,
     build_student_folder_name,
@@ -100,12 +100,6 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
 
         report = report_by_student.get(student_uid)
         report_match_strategy = report_strategy_by_student.get(student_uid, "")
-        context = _build_acta_context(
-            student,
-            metadata.title,
-            resolved_edition,
-            report,
-        )
 
         student_folder_name = build_student_folder_name(student.full_name)
         student_folder = output_dirs["students"] / student_folder_name
@@ -118,6 +112,7 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
         report_notes = ""
         manuscript_status = "ok"
         manuscript_notes = ""
+        manuscript_title = ""
 
         try:
             if legacy_manuscript_path != manuscript_path and legacy_manuscript_path.exists():
@@ -126,6 +121,19 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
             manuscript_path, manuscript_conversion_note = _convert_manuscript_to_pdf_if_needed(
                 manuscript_path
             )
+            if manuscript_path.suffix.lower() == ".pdf":
+                manuscript_title = extract_manuscript_title_from_pdf(manuscript_path, logger)
+                if manuscript_title:
+                    logger.info(
+                        "Manuscript title extracted for %s: %s",
+                        student.full_name,
+                        manuscript_title,
+                    )
+                else:
+                    message = "manuscript_title_not_found"
+                    manuscript_notes = (
+                        f"{manuscript_notes} | {message}" if manuscript_notes else message
+                    )
             if manuscript_conversion_note:
                 manuscript_notes = (
                     f"{manuscript_notes} | {manuscript_conversion_note}"
@@ -150,6 +158,14 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
         else:
             report_notes = "director_report_not_found"
             logger.warning("No director report matched for %s", student.full_name)
+
+        context = _build_acta_context(
+            student,
+            metadata.title,
+            resolved_edition,
+            report,
+            manuscript_title,
+        )
 
         output_stem = build_acta_output_stem(
             student_name=student.full_name,
@@ -517,10 +533,13 @@ def _build_acta_context(
     titulacion: str,
     edicion: str,
     report: DirectorReport | None,
+    manuscript_title: str,
 ) -> ActaContext:
-    thesis_title = clean_text(student.thesis_title)
+    thesis_title = clean_text(manuscript_title)
     if not thesis_title and report:
         thesis_title = clean_text(report.thesis_title)
+    if not thesis_title:
+        thesis_title = clean_text(student.thesis_title)
     if not thesis_title:
         thesis_title = clean_text(student.thesis_topic)
 

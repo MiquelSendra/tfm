@@ -94,5 +94,6 @@ informes/
 scripts/
 build/
 dist/
+dist2/
 requirements-build.txt
 tfm_assigner.spec

@@ -48,6 +48,26 @@ def extract_pdf_text(path: Path, logger: logging.Logger) -> str:
         return ""
 
 
+def extract_pdf_page_text(path: Path, page_index: int, logger: logging.Logger) -> str:
+    """Read extractable text from one PDF page."""
+    try:
+        reader = PdfReader(str(path), strict=False)
+        if page_index < 0 or page_index >= len(reader.pages):
+            return ""
+        return reader.pages[page_index].extract_text() or ""
+    except Exception as exc:  # pragma: no cover - depends on third-party parser
+        logger.warning("Could not read PDF page %s from %s: %s", page_index + 1, path.name, exc)
+        return ""
+
+
+def extract_manuscript_title_from_pdf(path: Path, logger: logging.Logger) -> str:
+    """Extract thesis title from the first manuscript page."""
+    first_page_text = extract_pdf_page_text(path, 0, logger)
+    if not first_page_text:
+        return ""
+    return _extract_manuscript_title_from_first_page(first_page_text)
+
+
 def is_director_report(text: str) -> bool:
     """Heuristic detector for director report PDFs."""
     normalized = normalize_text(text)
@@ -124,6 +144,64 @@ def _clean_multiline_text(value: str) -> str:
     lines = [clean_text(line) for line in value.splitlines()]
     lines = [line for line in lines if line]
     return " ".join(lines).strip()
+
+
+def _extract_manuscript_title_from_first_page(text: str) -> str:
+    metadata_markers = (
+        "titulacion",
+        "alumno",
+        "alumna",
+        "convocatoria",
+        "curso academico",
+        "dni",
+        "d n i",
+        "director",
+        "orientacion",
+        "creditos",
+        "ciudad mes y ano",
+    )
+    title_lines: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = _collapse_whitespace(clean_text(raw_line))
+        if not line:
+            continue
+
+        normalized = normalize_text(line)
+        if any(normalized.startswith(marker) for marker in metadata_markers):
+            break
+        title_lines.append(line)
+
+    while title_lines and _looks_like_cover_preamble(title_lines[0]):
+        title_lines.pop(0)
+
+    return _collapse_whitespace(" ".join(title_lines))
+
+
+def _looks_like_cover_preamble(line: str) -> bool:
+    normalized = normalize_text(line)
+    if not normalized:
+        return True
+
+    if normalized in {
+        "viu",
+        "universidad internacional de valencia",
+        "universidad",
+    }:
+        return True
+
+    return bool(
+        re.fullmatch(
+            r"\d{1,2}\s+[a-záéíóúü]{3,}(?:\s+de)?\s+\d{4}",
+            normalized,
+        )
+        or re.fullmatch(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", normalized)
+        or re.fullmatch(r"[a-záéíóúü]+,\s+[a-záéíóúü]+\s+\d{4}", normalized)
+    )
+
+
+def _collapse_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def try_fill_pdf_template(
