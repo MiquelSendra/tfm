@@ -132,6 +132,20 @@ def build_student_folder_name(student_name: str) -> str:
     return display_name
 
 
+def build_student_document_name(prefix: str, student_name: str, extension: str = ".pdf") -> str:
+    """Build a descriptive ASCII filename like 'prefix_Apellido_Apellido_Nombre.pdf'."""
+    display_name = build_student_folder_name(student_name)
+    ascii_name = unidecode(display_name)
+    ascii_name = ascii_name.replace(", ", "_")
+    ascii_name = ascii_name.replace(",", "_")
+    ascii_name = re.sub(r"[^A-Za-z0-9_]+", "_", ascii_name)
+    ascii_name = re.sub(r"_+", "_", ascii_name).strip("_")
+    normalized_prefix = re.sub(r"[^A-Za-z0-9_]+", "_", clean_text(prefix))
+    normalized_prefix = re.sub(r"_+", "_", normalized_prefix).strip("_")
+    normalized_extension = extension if extension.startswith(".") else f".{extension}"
+    return f"{normalized_prefix}_{ascii_name}{normalized_extension}"
+
+
 def stem_from_path(path: Path) -> str:
     """Return a clean stem from a path object."""
     return clean_text(path.stem)

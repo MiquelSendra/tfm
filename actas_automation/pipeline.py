@@ -23,8 +23,14 @@ from .models import (
     SubmissionEntry,
 )
 from .reports import extract_manuscript_title_from_pdf, parse_pdf_files, try_fill_pdf_template
+from .supporting_documents import (
+    SupportingDocument,
+    copy_supporting_document,
+    read_slide_documents,
+)
 from .text_utils import (
     build_acta_output_stem,
+    build_student_document_name,
     build_student_folder_name,
     clean_text,
     extract_template_code_and_edition,
@@ -48,6 +54,13 @@ class _MatchedSubmission:
     student: StudentRecord
     match: NameMatch
     zip_member: str
+
+
+@dataclass(frozen=True)
+class _MatchedSupportingDocument:
+    student: StudentRecord
+    document: SupportingDocument
+    strategy: str
 
 
 def run_pipeline(config: AppConfig) -> PipelineOutcome:
@@ -83,6 +96,15 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
         logger,
     )
     manual_rows.extend(report_manual_rows)
+    slides = read_slide_documents(config.workspace_dir / "diapositivas", logger)
+    slide_by_student, slide_manual_rows = _match_supporting_documents(
+        slides,
+        matcher,
+        students,
+        logger,
+        source_type="slides",
+    )
+    manual_rows.extend(slide_manual_rows)
 
     summary_rows: list[dict[str, str]] = []
     generated_count = 0
@@ -100,28 +122,54 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
 
         report = report_by_student.get(student_uid)
         report_match_strategy = report_strategy_by_student.get(student_uid, "")
+        slide_document = slide_by_student.get(student_uid)
 
         student_folder_name = build_student_folder_name(student.full_name)
         student_folder = output_dirs["students"] / student_folder_name
         student_folder.mkdir(parents=True, exist_ok=True)
+        output_stem = build_acta_output_stem(
+            student_name=student.full_name,
+            template_path=sources.acta_pdf_template,
+            edition=resolved_edition,
+        )
+        acta_output_pdf = student_folder / f"{output_stem}.pdf"
+        output_file = str(acta_output_pdf)
 
         manuscript_name = _clean_submission_filename(Path(submission_member).name)
         manuscript_path = student_folder / manuscript_name
         legacy_manuscript_path = student_folder / Path(submission_member).name
         report_path_in_folder = ""
+        report_status = ""
         report_notes = ""
         manuscript_status = "ok"
         manuscript_notes = ""
         manuscript_title = ""
+        slide_path_in_folder = ""
+        slide_source_file = ""
+        slide_status = ""
+        slide_notes = ""
 
         try:
-            if legacy_manuscript_path != manuscript_path and legacy_manuscript_path.exists():
-                legacy_manuscript_path.unlink()
-            extract_zip_member(sources.zip_file, submission_member, manuscript_path)
-            manuscript_path, manuscript_conversion_note = _convert_manuscript_to_pdf_if_needed(
-                manuscript_path
+            existing_manuscript = _resolve_existing_manuscript_path(
+                manuscript_path,
+                legacy_manuscript_path,
             )
-            if manuscript_path.suffix.lower() == ".pdf":
+            if existing_manuscript:
+                manuscript_path = existing_manuscript
+                manuscript_status = "existing"
+                logger.info(
+                    "Skipping manuscript extraction for %s because it already exists.",
+                    student.full_name,
+                )
+                manuscript_conversion_note = ""
+            else:
+                if legacy_manuscript_path != manuscript_path and legacy_manuscript_path.exists():
+                    legacy_manuscript_path.unlink()
+                extract_zip_member(sources.zip_file, submission_member, manuscript_path)
+                manuscript_path, manuscript_conversion_note = _convert_manuscript_to_pdf_if_needed(
+                    manuscript_path
+                )
+            if manuscript_path.exists() and manuscript_path.suffix.lower() == ".pdf":
                 manuscript_title = extract_manuscript_title_from_pdf(manuscript_path, logger)
                 if manuscript_title:
                     logger.info(
@@ -145,19 +193,59 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
             manuscript_notes = f"manuscript_processing_error: {exc}"
             logger.exception("Error processing manuscript for %s", student.full_name)
 
+        report_target = student_folder / build_student_document_name(
+            "informe_director",
+            student.full_name,
+        )
+        legacy_report_target = student_folder / "informe_director.pdf"
         if report:
-            report_target = student_folder / report.path.name
             try:
-                copy2(report.path, report_target)
+                if _promote_legacy_named_file(legacy_report_target, report_target):
+                    report_status = "existing"
+                elif report_target.exists():
+                    report_status = "existing"
+                else:
+                    copy2(report.path, report_target)
+                    report_status = "copied"
                 report_path_in_folder = str(report_target)
             except Exception as exc:  # pragma: no cover - depends on source files
-                manuscript_status = "error"
+                report_status = "error"
                 message = f"report_copy_error: {exc}"
-                manuscript_notes = f"{manuscript_notes} | {message}" if manuscript_notes else message
+                report_notes = f"{report_notes} | {message}" if report_notes else message
                 logger.exception("Error copying director report for %s", student.full_name)
+        elif _promote_legacy_named_file(legacy_report_target, report_target) or report_target.exists():
+            report_status = "existing"
+            report_path_in_folder = str(report_target)
         else:
+            report_status = "missing"
             report_notes = "director_report_not_found"
             logger.warning("No director report matched for %s", student.full_name)
+
+        slide_target = student_folder / build_student_document_name(
+            "diapositivas",
+            student.full_name,
+        )
+        legacy_slide_target = student_folder / "diapositivas.pdf"
+        if slide_document:
+            try:
+                if _promote_legacy_named_file(legacy_slide_target, slide_target):
+                    slide_status = "existing"
+                elif slide_target.exists():
+                    slide_status = "existing"
+                else:
+                    copy_supporting_document(slide_document, slide_target)
+                    slide_status = "copied"
+                slide_path_in_folder = str(slide_target)
+                slide_source_file = slide_document.source_file
+            except Exception as exc:  # pragma: no cover - depends on source files
+                slide_status = "error"
+                slide_notes = f"slides_copy_error: {exc}"
+                logger.exception("Error copying slides for %s", student.full_name)
+        elif _promote_legacy_named_file(legacy_slide_target, slide_target) or slide_target.exists():
+            slide_status = "existing"
+            slide_path_in_folder = str(slide_target)
+        else:
+            slide_status = "missing"
 
         context = _build_acta_context(
             student,
@@ -166,31 +254,30 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
             report,
             manuscript_title,
         )
-
-        output_stem = build_acta_output_stem(
-            student_name=student.full_name,
-            template_path=sources.acta_pdf_template,
-            edition=resolved_edition,
-        )
-        acta_output_pdf = student_folder / f"{output_stem}.pdf"
-        generation_status = "ok"
+        generation_status = "created"
         generation_notes = ""
-        output_file = str(acta_output_pdf)
 
-        try:
-            success = try_fill_pdf_template(
-                sources.acta_pdf_template,
-                acta_output_pdf,
-                context,
-                logger,
+        if acta_output_pdf.exists():
+            generation_status = "existing"
+            logger.info(
+                "Skipping acta generation for %s because it already exists.",
+                student.full_name,
             )
-            if not success:
-                raise RuntimeError("Acta PDF template has no fillable fields.")
-            generated_count += 1
-        except Exception as exc:  # pragma: no cover - depends on source files
-            generation_status = "error"
-            generation_notes = str(exc)
-            logger.exception("Error generating acta for %s", student.full_name)
+        else:
+            try:
+                success = try_fill_pdf_template(
+                    sources.acta_pdf_template,
+                    acta_output_pdf,
+                    context,
+                    logger,
+                )
+                if not success:
+                    raise RuntimeError("Acta PDF template has no fillable fields.")
+                generated_count += 1
+            except Exception as exc:  # pragma: no cover - depends on source files
+                generation_status = "error"
+                generation_notes = str(exc)
+                logger.exception("Error generating acta for %s", student.full_name)
 
         summary_rows.append(
             {
@@ -204,11 +291,22 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
                 "director_report_file": report.path.name if report else "",
                 "director_report_name": report.extracted_name if report else "",
                 "director_report_match_strategy": report_match_strategy,
+                "director_report_status": report_status,
                 "director_report_output_file": report_path_in_folder,
+                "slides_status": slide_status,
+                "slides_source_file": slide_source_file,
+                "slides_output_file": slide_path_in_folder,
                 "acta_output_file": output_file,
                 "status": generation_status,
                 "notes": " | ".join(
-                    note for note in [generation_notes, manuscript_notes, report_notes] if note
+                    note
+                    for note in [
+                        generation_notes,
+                        manuscript_notes,
+                        report_notes,
+                        slide_notes,
+                    ]
+                    if note
                 ),
                 "manuscript_status": manuscript_status,
             }
@@ -230,7 +328,11 @@ def run_pipeline(config: AppConfig) -> PipelineOutcome:
             "director_report_file",
             "director_report_name",
             "director_report_match_strategy",
+            "director_report_status",
             "director_report_output_file",
+            "slides_status",
+            "slides_source_file",
+            "slides_output_file",
             "acta_output_file",
             "status",
             "manuscript_status",
@@ -380,6 +482,119 @@ def _filter_matched_submissions(
     return filtered
 
 
+def _match_supporting_documents(
+    documents: list[SupportingDocument],
+    matcher: StudentMatcher,
+    students: list[StudentRecord],
+    logger: logging.Logger,
+    source_type: str,
+) -> tuple[dict[str, SupportingDocument], list[dict[str, str]]]:
+    matched_by_student: dict[str, _MatchedSupportingDocument] = {}
+    manual_rows: list[dict[str, str]] = []
+    email_index = _build_email_index(students)
+
+    for document in documents:
+        matched_student: StudentRecord | None = None
+        strategy = ""
+
+        if document.email and document.email in email_index:
+            matched_student = email_index[document.email]
+            strategy = "email"
+        elif document.candidate_name:
+            match = matcher.match(document.candidate_name)
+            if match.status == "matched" and match.matched_student:
+                matched_student = match.matched_student
+                strategy = "cover_name"
+            else:
+                manual_rows.append(
+                    _manual_row(
+                        source_type=source_type,
+                        source_file=document.source_file,
+                        match=match,
+                        issue=match.status,
+                    )
+                )
+                logger.warning(
+                    "%s requires manual review: '%s' (%s, %.2f)",
+                    source_type,
+                    document.candidate_name,
+                    match.status,
+                    match.score,
+                )
+                continue
+        else:
+            manual_rows.append(
+                {
+                    "source_type": source_type,
+                    "source_file": document.source_file,
+                    "candidate_name": "",
+                    "best_student": "",
+                    "best_score": "0.00",
+                    "second_score": "0.00",
+                    "issue": "name_not_found",
+                    "notes": document.email,
+                }
+            )
+            logger.warning("%s skipped without candidate name: %s", source_type, document.source_file)
+            continue
+
+        existing = matched_by_student.get(matched_student.uid)
+        if not existing:
+            matched_by_student[matched_student.uid] = _MatchedSupportingDocument(
+                student=matched_student,
+                document=document,
+                strategy=strategy,
+            )
+            continue
+
+        if existing.strategy != "email" and strategy == "email":
+            manual_rows.append(
+                {
+                    "source_type": f"{source_type}_duplicate",
+                    "source_file": existing.document.source_file,
+                    "candidate_name": existing.document.candidate_name,
+                    "best_student": matched_student.full_name,
+                    "best_score": "0.00",
+                    "second_score": "0.00",
+                    "issue": "replaced_by_email_match",
+                    "notes": document.source_file,
+                }
+            )
+            matched_by_student[matched_student.uid] = _MatchedSupportingDocument(
+                student=matched_student,
+                document=document,
+                strategy=strategy,
+            )
+            continue
+
+        manual_rows.append(
+            {
+                "source_type": f"{source_type}_duplicate",
+                "source_file": document.source_file,
+                "candidate_name": document.candidate_name,
+                "best_student": matched_student.full_name,
+                "best_score": "0.00",
+                "second_score": "0.00",
+                "issue": f"duplicate_{source_type}_for_student",
+                "notes": (
+                    f"existing={existing.document.source_file};"
+                    f"strategy={existing.strategy}"
+                ),
+            }
+        )
+        logger.warning(
+            "Duplicate %s for student %s ignored: %s",
+            source_type,
+            matched_student.full_name,
+            document.source_file,
+        )
+
+    return {
+        student_uid: item.document
+        for student_uid, item in matched_by_student.items()
+    }, manual_rows
+
+
 def _match_reports(
     reports: list[DirectorReport],
     matcher: StudentMatcher,
@@ -526,6 +741,34 @@ def _extract_surname_key(name: str) -> str:
     else:
         surname = value.strip()
     return normalize_text(surname)
+
+
+def _build_email_index(students: list[StudentRecord]) -> dict[str, StudentRecord]:
+    index: dict[str, StudentRecord] = {}
+    for student in students:
+        email = clean_text(student.email).lower()
+        if email and email not in index:
+            index[email] = student
+    return index
+
+
+def _resolve_existing_manuscript_path(
+    manuscript_path: Path,
+    legacy_manuscript_path: Path,
+) -> Path | None:
+    for candidate in (manuscript_path, legacy_manuscript_path):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _promote_legacy_named_file(legacy_path: Path, target_path: Path) -> bool:
+    if target_path.exists():
+        return True
+    if not legacy_path.exists():
+        return False
+    legacy_path.replace(target_path)
+    return True
 
 
 def _build_acta_context(

@@ -38,7 +38,8 @@ After running, the tool creates:
 `output/`
 - `estudiantes/Apellido1 Apellido2, Nombre/`
   - manuscript (copied as received from ZIP)
-  - matched director report PDF (if found)
+  - `informe_director_Apellido1_Apellido2_Nombre.pdf` (if found)
+  - `diapositivas_Apellido1_Apellido2_Nombre.pdf` (if found)
   - generated acta PDF (prefilled student data, tribunal fields remain editable)
 - `resumen_procesamiento.csv`
 - `revision_manual.csv`

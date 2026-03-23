@@ -71,11 +71,22 @@ def extract_manuscript_title_from_pdf(path: Path, logger: logging.Logger) -> str
 def is_director_report(text: str) -> bool:
     """Heuristic detector for director report PDFs."""
     normalized = normalize_text(text)
-    return (
+    header_markers = (
         "informe del director" in normalized
-        and "datos del la estudiante" in normalized
-    ) or (
-        "informe del director" in normalized and "trabajo fin de titulo" in normalized
+        or "informe del director a" in normalized
+    )
+    structure_markers = (
+        "datos del la estudiante" in normalized
+        and "datos del la director a" in normalized
+        and "titulo del trabajo fin de titulo" in normalized
+    )
+    evaluation_markers = (
+        "presentacion del trabajo del la estudiante" in normalized
+        or "atendiendo a los criterios de evaluacion" in normalized
+        or "favorable" in normalized
+    )
+    return (header_markers and ("trabajo fin de titulo" in normalized or structure_markers)) or (
+        structure_markers and evaluation_markers
     )
 
 
@@ -94,8 +105,29 @@ def _parse_director_report(path: Path, text: str) -> DirectorReport:
         end_markers=("Datos del/la Director/a", "Datos del Director/a"),
     )
 
-    surnames = _extract_line_value(student_section, "Apellidos")
-    given_name = _extract_line_value(student_section, "Nombre")
+    surnames = _extract_field_value(
+        student_section,
+        "Apellidos",
+        stop_labels=(
+            "Nombre",
+            "Título del Trabajo Fin de Título (TFT)",
+            "Titulo del Trabajo Fin de Titulo (TFT)",
+            "Datos del/la Director/a",
+            "Datos del Director/a",
+            "Observaciones",
+        ),
+    )
+    given_name = _extract_field_value(
+        student_section,
+        "Nombre",
+        stop_labels=(
+            "Título del Trabajo Fin de Título (TFT)",
+            "Titulo del Trabajo Fin de Titulo (TFT)",
+            "Datos del/la Director/a",
+            "Datos del Director/a",
+            "Observaciones",
+        ),
+    )
     full_name = ""
     if surnames and given_name:
         full_name = f"{surnames}, {given_name}"
@@ -140,10 +172,38 @@ def _extract_line_value(section_text: str, key: str) -> str:
     return clean_text(match.group(1))
 
 
+def _extract_field_value(
+    section_text: str,
+    label: str,
+    stop_labels: tuple[str, ...] = (),
+) -> str:
+    escaped_stops = [re.escape(stop_label) for stop_label in stop_labels if stop_label]
+    extra_stops = [
+        r"Apellidos\s*:",
+        r"Nombre\s*:",
+    ]
+    lookahead_options = escaped_stops + extra_stops + [r"$"]
+    pattern = re.compile(
+        rf"{re.escape(label)}\s*:\s*(.+?)(?=(?:{'|'.join(lookahead_options)}))",
+        re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.search(section_text)
+    if not match:
+        return _extract_line_value(section_text, label)
+    return _clean_inline_field(match.group(1))
+
+
 def _clean_multiline_text(value: str) -> str:
     lines = [clean_text(line) for line in value.splitlines()]
     lines = [line for line in lines if line]
     return " ".join(lines).strip()
+
+
+def _clean_inline_field(value: str) -> str:
+    cleaned = clean_text(value)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r"\s*[|]+\s*", " ", cleaned)
+    return cleaned.strip(" :;-")
 
 
 def _extract_manuscript_title_from_first_page(text: str) -> str:
